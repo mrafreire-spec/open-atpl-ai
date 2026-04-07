@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  deserializeMessagesWithInterruptDetection,
   loadConversationForResume,
   ResumeTranscriptTooLargeError,
 } from './conversationRecovery.ts'
@@ -46,6 +47,12 @@ async function writeJsonl(entry: unknown): Promise<string> {
 
 afterEach(async () => {
   process.env.CLAUDE_CODE_SIMPLE = originalSimple
+  delete process.env.CLAUDE_CODE_USE_OPENAI
+  delete process.env.CLAUDE_CODE_USE_GEMINI
+  delete process.env.CLAUDE_CODE_USE_GITHUB
+  delete process.env.CLAUDE_CODE_USE_BEDROCK
+  delete process.env.CLAUDE_CODE_USE_VERTEX
+  delete process.env.CLAUDE_CODE_USE_FOUNDRY
   await Promise.all(tempDirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })))
 })
 
@@ -75,5 +82,77 @@ test('loadConversationForResume rejects oversized reconstructed transcripts', as
   expect((caught as Error).message).toContain(
     'Reconstructed transcript is too large to resume safely',
   )
+})
+
+test('deserializeMessagesWithInterruptDetection strips thinking blocks only for OpenAI-compatible providers', () => {
+  const serializedMessages = [
+    user(id(10), 'hello'),
+    {
+      type: 'assistant',
+      uuid: id(11),
+      parentUuid: id(10),
+      timestamp: ts,
+      cwd: '/tmp',
+      sessionId,
+      version: 'test',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'secret reasoning' },
+          { type: 'text', text: 'visible reply' },
+        ],
+      },
+    },
+    {
+      type: 'assistant',
+      uuid: id(12),
+      parentUuid: id(11),
+      timestamp: ts,
+      cwd: '/tmp',
+      sessionId,
+      version: 'test',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'only hidden reasoning' }],
+      },
+    },
+    user(id(13), 'follow up'),
+  ]
+
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  const thirdParty = deserializeMessagesWithInterruptDetection(serializedMessages as never[])
+  const thirdPartyAssistantMessages = thirdParty.messages.filter(
+    message => message.type === 'assistant',
+  )
+
+  expect(thirdPartyAssistantMessages).toHaveLength(2)
+  expect(thirdPartyAssistantMessages[0]?.message?.content).toEqual([
+    { type: 'text', text: 'visible reply' },
+  ])
+  expect(
+    JSON.stringify(thirdPartyAssistantMessages.map(message => message.message?.content)),
+  ).not.toContain('secret reasoning')
+  expect(
+    JSON.stringify(thirdPartyAssistantMessages.map(message => message.message?.content)),
+  ).not.toContain('only hidden reasoning')
+
+  delete process.env.CLAUDE_CODE_USE_OPENAI
+  process.env.CLAUDE_CODE_USE_BEDROCK = '1'
+  const anthropicCompatible = deserializeMessagesWithInterruptDetection(serializedMessages as never[])
+  const anthropicAssistantMessages = anthropicCompatible.messages.filter(
+    message => message.type === 'assistant',
+  )
+
+  expect(anthropicAssistantMessages).toHaveLength(2)
+  expect(anthropicAssistantMessages[0]?.message?.content).toEqual([
+    { type: 'thinking', thinking: 'secret reasoning' },
+    { type: 'text', text: 'visible reply' },
+  ])
+  expect(
+    JSON.stringify(anthropicAssistantMessages.map(message => message.message?.content)),
+  ).toContain('secret reasoning')
+  expect(
+    JSON.stringify(anthropicAssistantMessages.map(message => message.message?.content)),
+  ).not.toContain('only hidden reasoning')
 })
 
