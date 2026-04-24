@@ -61,6 +61,17 @@ If the install later reports `ripgrep not found`, install ripgrep system-wide an
 openclaude
 ```
 
+### OPEN ATPL AI Free Mode
+
+For this fork, use the auto-free launcher:
+
+```bash
+cd /Users/antoniofreire/open-atpl-ai
+scripts/run-open-atpl-ai-free.sh
+```
+
+Full setup details: `docs/OPEN_ATPL_AI_FREE_SETUP.md`
+
 Inside OpenClaude:
 
 - run `/provider` for guided provider setup and saved profiles
